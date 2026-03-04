@@ -640,6 +640,27 @@ mock.module("./some-module", () => ({
 <!-- lore:019c972c-9f0d-7c8e-95b1-7beda99c36a8 -->
 * **parseSentryUrl does not handle subdomain-style SaaS URLs**: parseSentryUrl in src/lib/sentry-url-parser.ts handles both path-based (\`/organizations/{org}/...\`) and subdomain-style (\`https://{org}.sentry.io/issues/123/\`) URLs. \`matchSubdomainOrg()\` extracts org from hostname ending in \`.sentry.io\`. Region subdomains (\`us\`, \`de\`) filtered by requiring org slug length > 2. Supports \`/issues/{id}/\`, \`/issues/{id}/events/{eventId}/\`, and \`/traces/{traceId}/\` paths. Self-hosted uses path-based only.
 
+
+<!-- lore:019cb37e-dd69-744f-9939-cf997ddda8c9 -->
+* **Binary delta upgrades: bsdiff patches are 300-600x smaller than full downloads**: Bun-compiled CLI binaries are ~98% runtime, so consecutive release diffs are tiny. bsdiff patches between stable versions are ~50 KB vs ~29 MB gzip (500x+ savings). Even across Bun version bumps (stable→nightly), patches are ~521 KB (57x savings). Patches are already bzip2-compressed internally — gzip adds nothing. bspatch applies in 0.6s using ~207 MB RAM. Key design: generate N-1 patches only (previous→current), fall back to full download for older versions. Store patches alongside binaries (GH Releases for stable, GHCR for nightly). Always SHA-256 verify the patched result before atomic replace. CI cost: ~45s and ~890 MB RAM per platform, parallelizable.
+
+<!-- lore:019cafbb-24ad-75a3-b037-5efbe6a1e85d -->
+* **DSN org prefix normalization in arg-parsing.ts**: Sentry DSN hosts encode org IDs as \`oNNNNN\` (e.g., \`o1081365.ingest.us.sentry.io\`). The Sentry API rejects the \`o\`-prefixed form. \`stripDsnOrgPrefix()\` in \`src/lib/arg-parsing.ts\` uses \`/^o(\d+)$/\` to strip the prefix — safe for slugs like \`organic\`. Applied in \`parseOrgProjectArg()\` and \`parseWithSlash()\`, covering all API call paths consuming \`parsed.org\`.
+
+<!-- lore:019cb38b-e327-7ec5-8fb0-9e635b2bac48 -->
+* **GHCR versioned nightly tags for delta upgrade support**: Nightlies use three GHCR tag types: \`:nightly\` (rolling, overwritten each push), \`:nightly-\<version>\` (immutable, added via \`oras tag\` zero-copy), and \`:patch-\<version>\` (separate manifest with patch files + \`from-version\` annotation). Chain resolution walks backwards from target to current version using patch manifests. Tag listing via \`/v2/getsentry/cli/tags/list\` filtered by \`nightly-\*\` prefix. Retention: keep last 30 versioned tags, prune weekly via scheduled workflow. Storage is free for public GHCR packages.
+
+<!-- lore:a1f33ceb-6116-4d29-b6d0-0dc9678e4341 -->
+* **Issue list auto-pagination beyond API's 100-item cap**: Sentry API silently caps \`limit\` at 100 per request. \`listIssuesAllPages()\` auto-paginates using Link headers, bounded by MAX\_PAGINATION\_PAGES (50 pages). \`API\_MAX\_PER\_PAGE\` constant is shared across all paginated consumers. \`--limit\` means total results everywhere (max 1000, default 25). Org-all mode uses \`fetchOrgAllIssues()\` helper; explicit \`--cursor\` does single-page fetch to preserve cursor chain.
+
+<!-- lore:019ca9c3-989c-7c8d-bcd0-9f308fd2c3d7 -->
+* **Sentry CLI markdown-first formatting pipeline replaces ad-hoc ANSI**: Formatters build CommonMark strings; \`renderMarkdown()\` renders to ANSI for TTY or raw markdown for non-TTY. Key helpers: \`colorTag()\`, \`mdKvTable()\`, \`mdRow()\`, \`mdTableHeader()\` (\`:\` suffix = right-aligned), \`renderTextTable()\`. \`isPlainOutput()\` checks \`SENTRY\_PLAIN\_OUTPUT\` > \`NO\_COLOR\` > \`!isTTY\`. Batch path: \`formatXxxTable()\`. Streaming path: \`StreamingTable\` (TTY) or raw markdown rows (plain). Both share \`buildXxxRowCells()\`.
+
+<!-- lore:019ca9c3-98a2-7a81-9db7-d36c2e71237c -->
+* **Sentry trace-logs API is org-scoped, not project-scoped**: The Sentry trace-logs endpoint (\`/organizations/{org}/trace-logs/\`) is org-scoped, so \`trace logs\` uses \`resolveOrg()\` not \`resolveOrgAndProject()\`. The endpoint is PRIVATE in Sentry source, excluded from the public OpenAPI schema — \`@sentry/api\` has no generated types. The hand-written \`TraceLogSchema\` in \`src/types/sentry.ts\` is required until Sentry makes it public.
+
+<!-- lore:019cb38b-e322-7ab2-9de2-f1bb89de5e5c -->
+* **TRDIFF10 patch format from zig-bsdiff for delta upgrades**: Delta upgrades use zig-bsdiff's TRDIFF10 format: 32-byte header (\`TRDIFF10\` magic + controlLen/diffLen/newSize as i64 LE) followed by 3 zstd-compressed blocks (control, diff, extra). Client-side bspatch is pure TypeScript using \`Bun.zstdDecompressSync()\` — no external dependencies. The \`offtin\` function reads signed 64-bit LE with sign in bit 7 of byte 7. CI generates patches using zig-bsdiff v0.1.19 (pinned + SHA-256 verified). npm/Node users are excluded — they upgrade via \`npm update\`, and \`Bun.zstdDecompressSync\` has no Node equivalent. The 60% threshold ensures patch chains never exceed 60% of full \`.gz\` download size before falling back. For ~100 MB binaries, the decompressed diff block is ~100 MB (one byte per matched byte, mostly 0x00). Use \`Bun.mmap()\` for old file (0 heap), \`DecompressionStream('zstd')\` for streaming diff/extra blocks (~few KB buffer), and \`Bun.file().writer()\` + \`Bun.CryptoHasher\` for streaming verified output.
 ### Decision
 
 <!-- lore:019c99d5-69f2-74eb-8c86-411f8512801d -->
@@ -648,6 +669,9 @@ mock.module("./some-module", () => ({
 <!-- lore:00166785-609d-4ab5-911e-ee205d17b90c -->
 * **whoami should be separate from auth status command**: The \`sentry auth whoami\` command should be a dedicated command separate from \`sentry auth status\`. They serve different purposes: \`status\` shows everything about auth state (token, expiry, defaults, org verification), while \`whoami\` just shows user identity (name, email, username, ID) by fetching live from \`/auth/\` endpoint. \`sentry whoami\` should be a top-level alias (like \`sentry issues\` → \`sentry issue list\`). \`whoami\` should support \`--json\` for machine consumption and be lightweight — no credential verification, no defaults listing.
 
+
+<!-- lore:019c8f3b-84be-79be-9518-e5ecd2ea64b9 -->
+* **Use -t (not -p) as shortcut alias for --period flag**: The --period flag on issue list uses -t (for 'time period') as its short alias, not -p. The rationale: -p could be confused with --platform from other CLI tools/contexts. -t maps naturally to 'time period' and avoids collision. This was a deliberate choice after initial implementation used -p.
 ### Gotcha
 
 <!-- lore:019c8ab6-d119-7365-9359-98ecf464b704 -->
@@ -674,6 +698,18 @@ mock.module("./some-module", () => ({
 <!-- lore:019c9741-d78e-73b1-87c2-e360ef6c7475 -->
 * **useTestConfigDir without isolateProjectRoot causes DSN scanning of repo tree**: \`useTestConfigDir()\` creates temp dirs under \`.test-tmp/\` in the repo tree. Without \`{ isolateProjectRoot: true }\`, \`findProjectRoot\` walks up and finds the repo's \`.git\`, causing DSN detection to scan real source code and trigger network calls against test mocks (timeouts). Always pass \`isolateProjectRoot: true\` when tests exercise \`resolveOrg\`, \`detectDsn\`, or \`findProjectRoot\`.
 
+
+<!-- lore:019c9994-d161-783e-8b3e-79457cd62f42 -->
+* **Biome lint: Response.redirect() required, nested ternaries forbidden**: Biome lint rules that frequently trip up this codebase: (1) \`useResponseRedirect\`: use \`Response.redirect(url, status)\` not \`new Response\`. (2) \`noNestedTernary\`: use \`if/else\`. (3) \`noComputedPropertyAccess\`: use \`obj.property\` not \`obj\["property"]\`. (4) Max cognitive complexity 15 per function — extract helpers to stay under.
+
+<!-- lore:019c8c31-f52f-7230-9252-cceb907f3e87 -->
+* **Bugbot flags defensive null-checks as dead code — keep them with JSDoc justification**: Cursor Bugbot and Sentry Seer repeatedly flag two false positives: (1) defensive null-checks as "dead code" — keep them with JSDoc explaining why the guard exists for future safety, especially when removing would require \`!\` assertions banned by \`noNonNullAssertion\`. (2) stderr spinner output during \`--json\` mode — always a false positive since progress goes to stderr, JSON to stdout. Reply explaining the rationale and resolve.
+
+<!-- lore:019c99c3-766b-7ae7-be1f-4d5e08da27d3 -->
+* **Cherry-picking GHCR tests requires updating mocks from version.json to GHCR manifest flow**: Nightly test mocks must use the 3-step GHCR flow: (1) token exchange at \`ghcr.io/token\`, (2) manifest fetch at \`/manifests/nightly\` returning JSON with \`annotations.version\` and \`layers\[].annotations\["org.opencontainers.image.title"]\`, (3) blob download returning \`Response.redirect()\` to Azure. The \`mockNightlyVersion()\` and \`mockGhcrNightlyVersion()\` helpers must handle all three URLs. Platform-specific filenames in manifest layers must use \`if/else\` blocks (Biome forbids nested ternaries).
+
+<!-- lore:019c9a88-bf99-7322-b192-aafe4636c600 -->
+* **getsentry/codecov-action enables JUnit XML test reporting by default**: The \`getsentry/codecov-action@main\` has \`enable-tests: true\` by default, which searches for JUnit XML files matching \`\*\*/\*.junit.xml\`. If the test framework doesn't produce JUnit XML, the action emits 3 warnings on every CI run: "No files found matching pattern", "No JUnit XML files found", and "Please ensure your test framework is generating JUnit XML output". Fix: either set \`enable-tests: false\` in the action inputs, or configure the test runner to output JUnit XML. For Bun, add \`\[test.reporter] junit = "test-results.junit.xml"\` to \`bunfig.toml\` and add \`\*.junit.xml\` to \`.gitignore\`.
 ### Pattern
 
 <!-- lore:019c9793-fb1c-7986-936e-57949e9a30d0 -->
@@ -688,8 +724,26 @@ mock.module("./some-module", () => ({
 <!-- lore:019cb162-d3ad-7b05-ab4f-f87892d517a6 -->
 * **Shared pagination infrastructure: buildPaginationContextKey and parseCursorFlag**: List commands with cursor pagination use \`buildPaginationContextKey(type, identifier, flags)\` for composite context keys and \`parseCursorFlag(value)\` accepting \`"last"\` magic value. Critical: \`resolveCursor()\` must be called inside the \`org-all\` override closure, not before \`dispatchOrgScopedList\` — otherwise cursor validation errors fire before the correct mode-specific error.
 
+
+<!-- lore:dbd63348-2049-42b3-bb99-d6a3d64369c7 -->
+* **Branch naming and commit message conventions for Sentry CLI**: Branch naming: \`feat/\<short-description>\` or \`fix/\<issue-number>-\<short-description>\` (e.g., \`feat/ghcr-nightly-distribution\`, \`fix/268-limit-auto-pagination\`). Commit message format: \`type(scope): description (#issue)\` (e.g., \`fix(issue-list): auto-paginate --limit beyond 100 (#268)\`, \`feat(nightly): distribute via GHCR instead of GitHub Releases\`). Types seen: fix, refactor, meta, release, feat. PRs are created as drafts via \`gh pr create --draft\`. Implementation plans are attached to commits via \`git notes add\` rather than in PR body or commit message.
+
+<!-- lore:019c8c17-f5de-71f2-93b5-c78231e29519 -->
+* **Make Bun.which testable by accepting optional PATH parameter**: When wrapping \`Bun.which()\` in a helper function, accept an optional \`pathEnv?: string\` parameter and pass it as \`{ PATH: pathEnv }\` to \`Bun.which\`. This makes the function deterministically testable without mocking — tests can pass a controlled PATH (e.g., \`/nonexistent\` for false, \`dirname(Bun.which('bash'))\` for true). Pattern: \`const opts = pathEnv !== undefined ? { PATH: pathEnv } : undefined; return Bun.which(name, opts) !== null;\`
+
+<!-- lore:019c90f5-9140-75d0-a59d-05b70b085561 -->
+* **Multi-target concurrent progress needs per-target delta tracking**: When multiple targets fetch concurrently and each reports cumulative progress, maintain a \`prevFetched\` array and \`totalFetched\` running sum. Each callback computes \`delta = fetched - prevFetched\[i]\`, adds to total. This prevents display jumps and double-counting. Use \`totalFetched += delta\` (O(1)), not \`reduce()\` on every callback.
+
+<!-- lore:019c90f5-913b-7995-8bac-84289cf5d6d9 -->
+* **Pagination contextKey must include all query-varying parameters with escaping**: Pagination \`contextKey\` must encode every query-varying parameter (sort, query, period) with \`escapeContextKeyValue()\` (replaces \`|\` with \`%7C\`). Always provide a fallback before escaping since \`flags.period\` may be \`undefined\` in tests despite having a default: \`flags.period ? escapeContextKeyValue(flags.period) : "90d"\`.
+
+<!-- lore:019c8a8a-64ee-703c-8c1e-ed32ae8a90a7 -->
+* **PR review workflow: reply, resolve, amend, force-push**: PR review workflow: (1) Read unresolved threads via GraphQL, (2) make code changes, (3) run lint+typecheck+tests, (4) create a SEPARATE commit per review round (not amend) for incremental review, (5) push normally, (6) reply to comments via REST API, (7) resolve threads via GraphQL \`resolveReviewThread\`. Only amend+force-push when user explicitly asks or pre-commit hook modified files.
 ### Preference
 
 <!-- lore:019c9700-0fc3-730c-82c3-a290d5ecc2ea -->
 * **CI scripts: prefer jq/sed over node -e for JSON manipulation**: Reviewer (BYK) prefers using standard Unix tools (\`jq\`, \`sed\`, \`awk\`) over \`node -e\` for simple JSON manipulation in CI workflow scripts. For example, reading/modifying package.json version: \`jq -r .version package.json\` to read, \`jq --arg v "$NEW" '.version = $v' package.json > tmp && mv tmp package.json\` to write. This avoids requiring Node.js to be installed in CI steps that only need basic JSON operations, and is more readable for shell-centric workflows.
+
+<!-- lore:019c91a8-879a-70cd-bfe4-4bb5bfb7b4d1 -->
+* **Use captureException (not captureMessage) for unexpected states, or Sentry logs**: When reporting unexpected/defensive-guard situations to Sentry (e.g., non-numeric input where a number was expected), the reviewer prefers \`Sentry.captureException(new Error(...))\` over \`Sentry.captureMessage(...)\`. \`captureMessage\` with 'warning' level was rejected in PR review. Alternatively, use the Sentry structured logger (\`Sentry.logger.warn(...)\`) for less severe diagnostic cases — this was accepted in the abbreviateCount NaN handler.
 <!-- End lore-managed section -->
