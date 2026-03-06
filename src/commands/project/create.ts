@@ -31,6 +31,14 @@ import {
   withAuthGuard,
 } from "../../lib/errors.js";
 import { formatProjectCreated, writeJson } from "../../lib/formatters/index.js";
+import { isPlainOutput } from "../../lib/formatters/markdown.js";
+import { buildMarkdownTable, type Column } from "../../lib/formatters/table.js";
+import { renderTextTable } from "../../lib/formatters/text-table.js";
+import {
+  COMMON_PLATFORMS,
+  isValidPlatform,
+  suggestPlatform,
+} from "../../lib/platforms.js";
 import { resolveOrg } from "../../lib/resolve-target.js";
 import {
   buildOrgNotFoundError,
@@ -48,42 +56,34 @@ type CreateFlags = {
   readonly json: boolean;
 };
 
-/**
- * Common Sentry platform identifiers shown when platform arg is missing or invalid.
- *
- * These use hyphen-separated format matching Sentry's internal platform registry
- * (see sentry/src/sentry/utils/platform_categories.py). This is a curated subset
- * of the ~120 supported values — the full list is available via the API endpoint
- * referenced in `buildPlatformError`.
- */
-const PLATFORMS = [
-  "javascript",
-  "javascript-react",
-  "javascript-nextjs",
-  "javascript-vue",
-  "javascript-angular",
-  "javascript-svelte",
-  "javascript-remix",
-  "javascript-astro",
-  "node",
-  "node-express",
-  "python",
-  "python-django",
-  "python-flask",
-  "python-fastapi",
-  "go",
-  "ruby",
-  "ruby-rails",
-  "php",
-  "php-laravel",
-  "java",
-  "android",
-  "dotnet",
-  "react-native",
-  "apple-ios",
-  "rust",
-  "elixir",
-] as const;
+/** Build a 3-column grid string from a flat list of platforms. */
+function platformGrid(items: readonly string[]): string {
+  const COLS = 3;
+  const rows: string[][] = [];
+  for (let i = 0; i < items.length; i += COLS) {
+    const row = items.slice(i, i + COLS);
+    while (row.length < COLS) {
+      row.push("");
+    }
+    rows.push(row);
+  }
+
+  if (isPlainOutput()) {
+    const columns: Column<string[]>[] = Array.from(
+      { length: COLS },
+      (_, ci) => ({
+        header: " ",
+        value: (row: string[]) => row[ci] ?? "",
+      })
+    );
+    return buildMarkdownTable(rows, columns);
+  }
+
+  const [first, ...rest] = rows;
+  return renderTextTable(first ?? [], rest, {
+    headerSeparator: false,
+  });
+}
 
 /**
  * Normalize common platform format mistakes.
@@ -142,16 +142,26 @@ function isPlatformError(error: ApiError): boolean {
  * @param platform - The invalid platform string, if provided
  */
 function buildPlatformError(nameArg: string, platform?: string): string {
-  const list = PLATFORMS.map((p) => `  ${p}`).join("\n");
   const heading = platform
     ? `Invalid platform '${platform}'.`
     : "Platform is required.";
 
+  let didYouMean = "";
+  if (platform) {
+    const suggestions = suggestPlatform(platform);
+    if (suggestions.length > 0) {
+      didYouMean = `\nDid you mean?\n${platformGrid(suggestions)}`;
+    }
+  }
+
+  const platformTable = platformGrid([...COMMON_PLATFORMS]);
+
   return (
-    `${heading}\n\n` +
-    "Usage:\n" +
+    `${heading}\n` +
+    didYouMean +
+    "\nUsage:\n" +
     `  sentry project create ${nameArg} <platform>\n\n` +
-    `Available platforms:\n\n${list}\n\n` +
+    `Common platforms:\n\n${platformTable}\n` +
     "Run 'sentry project create <name> <platform>' with any valid Sentry platform identifier."
   );
 }
@@ -331,6 +341,10 @@ export const createCommand = buildCommand({
     }
 
     const platform = normalizePlatform(platformArg, this.stderr);
+
+    if (!isValidPlatform(platform)) {
+      throw new CliError(buildPlatformError(nameArg, platform));
+    }
 
     const parsed = parseOrgProjectArg(nameArg);
 
