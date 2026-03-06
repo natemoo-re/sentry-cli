@@ -35,8 +35,11 @@ import { writeFooter, writeJson } from "../../lib/formatters/index.js";
 import { escapeMarkdownCell } from "../../lib/formatters/markdown.js";
 import { type Column, writeTable } from "../../lib/formatters/table.js";
 import {
+  applyFreshFlag,
   buildListCommand,
   buildListLimitFlag,
+  FRESH_ALIASES,
+  FRESH_FLAG,
   LIST_BASE_ALIASES,
   LIST_CURSOR_FLAG,
   LIST_JSON_FLAG,
@@ -62,6 +65,7 @@ type ListFlags = {
   readonly json: boolean;
   readonly cursor?: string;
   readonly platform?: string;
+  readonly fresh: boolean;
 };
 
 /**
@@ -583,14 +587,16 @@ export const listCommand = buildListCommand("project", {
         brief: "Filter by platform (e.g., javascript, python)",
         optional: true,
       },
+      fresh: FRESH_FLAG,
     },
-    aliases: { ...LIST_BASE_ALIASES, p: "platform" },
+    aliases: { ...LIST_BASE_ALIASES, ...FRESH_ALIASES, p: "platform" },
   },
   async func(
     this: SentryContext,
     flags: ListFlags,
     target?: string
   ): Promise<void> {
+    applyFreshFlag(flags);
     const { stdout, cwd } = this;
 
     const parsed = parseOrgProjectArg(target);

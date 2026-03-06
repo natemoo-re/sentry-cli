@@ -26,7 +26,9 @@ import {
 import { renderInlineMarkdown } from "../../lib/formatters/markdown.js";
 import type { StreamingTable } from "../../lib/formatters/text-table.js";
 import {
+  applyFreshFlag,
   buildListCommand,
+  FRESH_FLAG,
   TARGET_PATTERN_NOTE,
 } from "../../lib/list-command.js";
 import {
@@ -43,6 +45,7 @@ type ListFlags = {
   readonly follow?: number;
   readonly json: boolean;
   readonly trace?: string;
+  readonly fresh: boolean;
 };
 
 /** Maximum allowed value for --limit flag */
@@ -439,6 +442,7 @@ export const listCommand = buildListCommand("log", {
         brief: "Output as JSON",
         default: false,
       },
+      fresh: FRESH_FLAG,
     },
     aliases: {
       n: "limit",
@@ -451,6 +455,7 @@ export const listCommand = buildListCommand("log", {
     flags: ListFlags,
     target?: string
   ): Promise<void> {
+    applyFreshFlag(flags);
     const { stdout, stderr, cwd, setContext } = this;
 
     if (flags.trace) {

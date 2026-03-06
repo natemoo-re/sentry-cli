@@ -18,6 +18,11 @@ import { buildCommand } from "../../lib/command.js";
 import { ContextError, ValidationError } from "../../lib/errors.js";
 import { formatLogDetails, writeJson } from "../../lib/formatters/index.js";
 import { validateHexId } from "../../lib/hex-id.js";
+import {
+  applyFreshFlag,
+  FRESH_ALIASES,
+  FRESH_FLAG,
+} from "../../lib/list-command.js";
 import { logger } from "../../lib/logger.js";
 import {
   resolveOrgAndProject,
@@ -31,6 +36,7 @@ const log = logger.withTag("log-view");
 type ViewFlags = {
   readonly json: boolean;
   readonly web: boolean;
+  readonly fresh: boolean;
 };
 
 /** Usage hint for ContextError messages */
@@ -333,14 +339,16 @@ export const viewCommand = buildCommand({
         brief: "Open in browser",
         default: false,
       },
+      fresh: FRESH_FLAG,
     },
-    aliases: { w: "web" },
+    aliases: { ...FRESH_ALIASES, w: "web" },
   },
   async func(
     this: SentryContext,
     flags: ViewFlags,
     ...args: string[]
   ): Promise<void> {
+    applyFreshFlag(flags);
     const { stdout, cwd, setContext } = this;
     const cmdLog = logger.withTag("log.view");
 

@@ -43,8 +43,11 @@ import {
   writeJson,
 } from "../../lib/formatters/index.js";
 import {
+  applyFreshFlag,
   buildListCommand,
   buildListLimitFlag,
+  FRESH_ALIASES,
+  FRESH_FLAG,
   LIST_BASE_ALIASES,
   LIST_JSON_FLAG,
   LIST_TARGET_POSITIONAL,
@@ -80,6 +83,7 @@ type ListFlags = {
   readonly period: string;
   readonly json: boolean;
   readonly cursor?: string;
+  readonly fresh: boolean;
 };
 
 /** @internal */ export type SortValue = "date" | "new" | "freq" | "user";
@@ -1193,14 +1197,22 @@ export const listCommand = buildListCommand("issue", {
           'Pagination cursor for <org>/ or multi-target modes (use "last" to continue)',
         optional: true,
       },
+      fresh: FRESH_FLAG,
     },
-    aliases: { ...LIST_BASE_ALIASES, q: "query", s: "sort", t: "period" },
+    aliases: {
+      ...LIST_BASE_ALIASES,
+      ...FRESH_ALIASES,
+      q: "query",
+      s: "sort",
+      t: "period",
+    },
   },
   async func(
     this: SentryContext,
     flags: ListFlags,
     target?: string
   ): Promise<void> {
+    applyFreshFlag(flags);
     const { stdout, stderr, cwd, setContext } = this;
 
     const parsed = parseOrgProjectArg(target);
