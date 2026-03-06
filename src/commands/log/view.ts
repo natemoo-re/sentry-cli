@@ -9,6 +9,7 @@ import { isatty } from "node:tty";
 import type { SentryContext } from "../../context.js";
 import { getLogs } from "../../lib/api-client.js";
 import {
+  looksLikeIssueShortId,
   parseOrgProjectArg,
   parseSlashSeparatedArg,
 } from "../../lib/arg-parsing.js";
@@ -73,6 +74,8 @@ function splitLogIds(arg: string): string[] {
 export function parsePositionalArgs(args: string[]): {
   logIds: string[];
   targetArg: string | undefined;
+  /** Suggestion when first arg looks like an issue short ID */
+  suggestion?: string;
 } {
   if (args.length === 0) {
     throw new ContextError("Log ID", USAGE_HINT);
@@ -105,7 +108,15 @@ export function parsePositionalArgs(args: string[]): {
   if (logIds.length === 0) {
     throw new ContextError("Log ID", USAGE_HINT);
   }
-  return { logIds, targetArg: first };
+  // Swap detection is not useful here: validateHexId above rejects non-hex
+  // log IDs (which include any containing "/"), so detectSwappedViewArgs
+  // (which checks for "/" in the second arg) can never trigger.
+  // We still check for issue short IDs in the first (target) position.
+  const suggestion = looksLikeIssueShortId(first)
+    ? `Did you mean: sentry issue view ${first}`
+    : undefined;
+
+  return { logIds, targetArg: first, suggestion };
 }
 
 /**
@@ -331,10 +342,17 @@ export const viewCommand = buildCommand({
     ...args: string[]
   ): Promise<void> {
     const { stdout, cwd, setContext } = this;
+    const cmdLog = logger.withTag("log.view");
 
     // Parse positional args
-    const { logIds, targetArg } = parsePositionalArgs(args);
+    const { logIds, targetArg, suggestion } = parsePositionalArgs(args);
+    if (suggestion) {
+      cmdLog.warn(suggestion);
+    }
     const parsed = parseOrgProjectArg(targetArg);
+    if (parsed.type !== "auto-detect" && parsed.normalized) {
+      cmdLog.warn("Normalized slug (Sentry slugs use dashes, not underscores)");
+    }
 
     const target = await resolveTarget(parsed, logIds, cwd);
 

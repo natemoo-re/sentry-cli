@@ -651,6 +651,15 @@ mock.module("./some-module", () => ({
 
 ### Decision
 
+<!-- lore:019cc2ef-9be5-722d-bc9f-b07a8197eeed -->
+* **All view subcommands should use \<target> \<id> positional pattern**: All \`\* view\` subcommands (\`event view\`, \`log view\`, \`trace view\`, etc.) should follow a consistent \`\<target> \<id>\` positional argument pattern where target is the optional \`org/project\` specifier. During migration, use opportunistic argument swapping with a stderr warning when the user provides args in the wrong order. This follows the CLI UX auto-correction pattern: safe when input is already invalid, no ambiguity, and warning goes to stderr.
+
+<!-- lore:019c99d5-69f2-74eb-8c86-411f8512801d -->
+* **Raw markdown output for non-interactive terminals, rendered for TTY**: Markdown-first output pipeline: custom renderer in \`src/lib/formatters/markdown.ts\` walks \`marked\` tokens to produce ANSI-styled output. Commands build CommonMark using helpers (\`mdKvTable()\`, \`mdRow()\`, \`colorTag()\`, \`escapeMarkdownCell()\`, \`safeCodeSpan()\`) and pass through \`renderMarkdown()\`. \`isPlainOutput()\` precedence: \`SENTRY\_PLAIN\_OUTPUT\` > \`NO\_COLOR\` > \`FORCE\_COLOR\` > \`!isTTY\`. \`--json\` always outputs JSON. Colors defined in \`COLORS\` object in \`colors.ts\`. Tests run non-TTY so assertions match raw CommonMark; use \`stripAnsi()\` helper for rendered-mode assertions.
+
+<!-- lore:00166785-609d-4ab5-911e-ee205d17b90c -->
+* **whoami should be separate from auth status command**: The \`sentry auth whoami\` command should be a dedicated command separate from \`sentry auth status\`. They serve different purposes: \`status\` shows everything about auth state (token, expiry, defaults, org verification), while \`whoami\` just shows user identity (name, email, username, ID) by fetching live from \`/auth/\` endpoint. \`sentry whoami\` should be a top-level alias (like \`sentry issues\` → \`sentry issue list\`). \`whoami\` should support \`--json\` for machine consumption and be lightweight — no credential verification, no defaults listing.
+
 <!-- lore:019c8f3b-84be-79be-9518-e5ecd2ea64b9 -->
 * **Use -t (not -p) as shortcut alias for --period flag**: The --period flag on issue list uses -t (for 'time period') as its short alias, not -p. The rationale: -p could be confused with --platform from other CLI tools/contexts. -t maps naturally to 'time period' and avoids collision. This was a deliberate choice after initial implementation used -p.
 
@@ -675,6 +684,9 @@ mock.module("./some-module", () => ({
 
 <!-- lore:dbd63348-2049-42b3-bb99-d6a3d64369c7 -->
 * **Branch naming and commit message conventions for Sentry CLI**: Branch naming: \`feat/\<short-description>\` or \`fix/\<issue-number>-\<short-description>\` (e.g., \`feat/ghcr-nightly-distribution\`, \`fix/268-limit-auto-pagination\`). Commit message format: \`type(scope): description (#issue)\` (e.g., \`fix(issue-list): auto-paginate --limit beyond 100 (#268)\`, \`feat(nightly): distribute via GHCR instead of GitHub Releases\`). Types seen: fix, refactor, meta, release, feat. PRs are created as drafts via \`gh pr create --draft\`. Implementation plans are attached to commits via \`git notes add\` rather than in PR body or commit message.
+
+<!-- lore:5ac4e219-ea1f-41cb-8e97-7e946f5848c0 -->
+* **PR workflow: wait for Seer and Cursor BugBot before resolving**: After pushing a PR in the getsentry/cli repo, the CI pipeline includes Seer Code Review and Cursor Bugbot as advisory checks. Both typically take 2-3 minutes but may not trigger on draft PRs — only ready-for-review PRs reliably get bot reviews. The workflow is: push → wait for all CI (including npm build jobs which test the actual bundle) → check for inline review comments from Seer/BugBot → fix if needed → repeat. Use \`gh pr checks \<PR> --watch\` to monitor. Review comments are fetched via \`gh api repos/OWNER/REPO/pulls/NUM/comments\` and \`gh api repos/OWNER/REPO/pulls/NUM/reviews\`.
 
 <!-- lore:019cc3e6-0cf5-720d-beb7-97c9c9901295 -->
 * **Codecov patch coverage only counts test:unit and test:isolated, not E2E**: CI coverage merges \`test:unit\` (\`test/lib test/commands test/types --coverage\`) and \`test:isolated\` (\`test/isolated --coverage\`) into \`coverage/merged.lcov\`. E2E tests (\`test/e2e\`) are NOT included in coverage reports. So func tests that spy on exports (e.g., \`spyOn(apiClient, 'getLogs')\`) give zero coverage to the mocked function's body. To cover \`api-client.ts\` function bodies in unit tests, mock \`globalThis.fetch\` + \`setOrgRegion()\` + \`setAuthToken()\` and call the real function.
