@@ -90,6 +90,7 @@ export {
 export {
   getDetailedTrace,
   listTransactions,
+  normalizeTraceSpan,
 } from "./api/traces.js";
 
 export {
