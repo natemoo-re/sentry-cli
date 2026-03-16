@@ -635,6 +635,33 @@ sentry log view my-org/backend 968c763c740cfda8b6728f27fb9e9b01
 sentry log list --json | jq '.[] | select(.level == "error")'
 ```
 
+### Span
+
+View spans in distributed traces
+
+#### `sentry span list <org/project/trace-id...>`
+
+List spans in a trace
+
+**Flags:**
+- `-n, --limit <value> - Number of spans (<=1000) - (default: "25")`
+- `-q, --query <value> - Filter spans (e.g., "op:db", "duration:>100ms", "project:backend")`
+- `-s, --sort <value> - Sort order: date, duration - (default: "date")`
+- `-c, --cursor <value> - Pagination cursor (use "last" to continue from previous page)`
+- `-f, --fresh - Bypass cache, re-detect projects, and fetch fresh data`
+- `--json - Output as JSON`
+- `--fields <value> - Comma-separated fields to include in JSON output (dot.notation supported)`
+
+#### `sentry span view <trace-id/span-id...>`
+
+View details of specific spans
+
+**Flags:**
+- `--spans <value> - Span tree depth limit (number, "all" for unlimited, "no" to disable) - (default: "3")`
+- `-f, --fresh - Bypass cache, re-detect projects, and fetch fresh data`
+- `--json - Output as JSON`
+- `--fields <value> - Comma-separated fields to include in JSON output (dot.notation supported)`
+
 ### Trace
 
 View distributed traces
@@ -803,6 +830,23 @@ List logs from a project
 - `-f, --follow <value> - Stream logs (optionally specify poll interval in seconds)`
 - `--trace <value> - Filter logs by trace ID (32-character hex string)`
 - `--fresh - Bypass cache, re-detect projects, and fetch fresh data`
+- `--json - Output as JSON`
+- `--fields <value> - Comma-separated fields to include in JSON output (dot.notation supported)`
+
+### Spans
+
+List spans in a trace
+
+#### `sentry spans <org/project/trace-id...>`
+
+List spans in a trace
+
+**Flags:**
+- `-n, --limit <value> - Number of spans (<=1000) - (default: "25")`
+- `-q, --query <value> - Filter spans (e.g., "op:db", "duration:>100ms", "project:backend")`
+- `-s, --sort <value> - Sort order: date, duration - (default: "date")`
+- `-c, --cursor <value> - Pagination cursor (use "last" to continue from previous page)`
+- `-f, --fresh - Bypass cache, re-detect projects, and fetch fresh data`
 - `--json - Output as JSON`
 - `--fields <value> - Comma-separated fields to include in JSON output (dot.notation supported)`
 
