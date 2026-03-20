@@ -617,6 +617,9 @@ function parseMultiSlashIssueArg(
     );
   }
 
+  // Lowercase project slug — Sentry slugs are always lowercase.
+  const normalizedProject = project.toLowerCase();
+
   // Remainder with dash: "org/project/PROJ-G" — split remainder on last dash
   if (remainder.includes("-")) {
     const lastDash = remainder.lastIndexOf("-");
@@ -626,14 +629,19 @@ function parseMultiSlashIssueArg(
       return {
         type: "explicit",
         org,
-        project,
+        project: normalizedProject,
         suffix: `${subProject}-${suffix}`.toUpperCase(),
       };
     }
   }
 
   // "org/project/101149101" or "org/project/G" — treat remainder as suffix
-  return { type: "explicit", org, project, suffix: remainder.toUpperCase() };
+  return {
+    type: "explicit",
+    org,
+    project: normalizedProject,
+    suffix: remainder.toUpperCase(),
+  };
 }
 
 function parseAfterSlash(
@@ -670,7 +678,8 @@ function parseAfterSlash(
     }
 
     // "my-org/cli-G" or "sentry/spotlight-electron-4Y"
-    return { type: "explicit", org, project, suffix };
+    // Lowercase the project slug — Sentry slugs are always lowercase.
+    return { type: "explicit", org, project: project.toLowerCase(), suffix };
   }
 
   // "my-org/G" → explicit org + suffix only (no dash in rest)
@@ -724,7 +733,14 @@ function parseWithDash(arg: string): ParsedIssueArg {
   }
 
   // "cli-G" or "spotlight-electron-4Y"
-  return { type: "project-search", projectSlug, suffix };
+  // Lowercase the project slug since Sentry slugs are always lowercase.
+  // Users often type short IDs in uppercase (e.g., "EASI-API-3Y4") which
+  // produces an uppercase project slug that would fail API lookups (CLI-C8).
+  return {
+    type: "project-search",
+    projectSlug: projectSlug.toLowerCase(),
+    suffix,
+  };
 }
 
 /**
