@@ -171,32 +171,32 @@ export function isInPath(
 }
 
 /**
- * Add a directory to PATH in a shell config file.
+ * Append a shell config line to a config file with idempotency.
  *
- * @param configFile - Path to the config file
- * @param directory - Directory to add to PATH
- * @param shellType - The shell type (for correct syntax)
- * @returns Result of the modification attempt
+ * Shared implementation for `addToPath` and `addToFpath`. Handles file
+ * creation, duplicate detection, newline-aware appending, and error fallback.
+ *
+ * @param configFile - Path to the shell config file
+ * @param directory - Directory being configured (used for duplicate check)
+ * @param command - The full shell command to append (e.g. `export PATH="..."`)
+ * @param label - Human-readable label for messages (e.g. "PATH", "fpath")
  */
-export async function addToPath(
+async function addToShellConfig(
   configFile: string,
   directory: string,
-  shellType: ShellType
+  command: string,
+  label: string
 ): Promise<PathModificationResult> {
-  const pathCommand = getPathCommand(shellType, directory);
-
-  // Read current content
   const file = Bun.file(configFile);
   const exists = await file.exists();
 
   if (!exists) {
-    // Create the file with the PATH command
     try {
-      await Bun.write(configFile, `# sentry\n${pathCommand}\n`);
+      await Bun.write(configFile, `# sentry\n${command}\n`);
       return {
         modified: true,
         configFile,
-        message: `Created ${configFile} with PATH configuration`,
+        message: `Created ${configFile} with ${label} configuration`,
         manualCommand: null,
       };
     } catch {
@@ -204,34 +204,32 @@ export async function addToPath(
         modified: false,
         configFile: null,
         message: `Could not create ${configFile}`,
-        manualCommand: pathCommand,
+        manualCommand: command,
       };
     }
   }
 
   const content = await file.text();
 
-  // Check if already configured
-  if (content.includes(pathCommand) || content.includes(`"${directory}"`)) {
+  if (content.includes(command) || content.includes(`"${directory}"`)) {
     return {
       modified: false,
       configFile,
-      message: `PATH already configured in ${configFile}`,
+      message: `${label} already configured in ${configFile}`,
       manualCommand: null,
     };
   }
 
-  // Append to file
   try {
     const newContent = content.endsWith("\n")
-      ? `${content}\n# sentry\n${pathCommand}\n`
-      : `${content}\n\n# sentry\n${pathCommand}\n`;
+      ? `${content}\n# sentry\n${command}\n`
+      : `${content}\n\n# sentry\n${command}\n`;
 
     await Bun.write(configFile, newContent);
     return {
       modified: true,
       configFile,
-      message: `Added sentry to PATH in ${configFile}`,
+      message: `Added sentry ${label} in ${configFile}`,
       manualCommand: null,
     };
   } catch {
@@ -239,9 +237,47 @@ export async function addToPath(
       modified: false,
       configFile: null,
       message: `Could not write to ${configFile}`,
-      manualCommand: pathCommand,
+      manualCommand: command,
     };
   }
+}
+
+export function addToPath(
+  configFile: string,
+  directory: string,
+  shellType: ShellType
+): Promise<PathModificationResult> {
+  return addToShellConfig(
+    configFile,
+    directory,
+    getPathCommand(shellType, directory),
+    "PATH"
+  );
+}
+
+/**
+ * Generate the fpath command for zsh completion directory.
+ */
+export function getFpathCommand(directory: string): string {
+  return `fpath=("${directory}" $fpath)`;
+}
+
+/**
+ * Add a directory to zsh's fpath in a shell config file.
+ *
+ * @param configFile - Path to the zsh config file (e.g. ~/.zshrc)
+ * @param directory - Directory to add to fpath
+ */
+export function addToFpath(
+  configFile: string,
+  directory: string
+): Promise<PathModificationResult> {
+  return addToShellConfig(
+    configFile,
+    directory,
+    getFpathCommand(directory),
+    "fpath"
+  );
 }
 
 /**
