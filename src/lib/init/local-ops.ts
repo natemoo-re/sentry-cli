@@ -38,6 +38,9 @@ import type {
   WizardOptions,
 } from "./types.js";
 
+/** Matches a bare numeric org ID extracted from a DSN (e.g. "4507492088676352"). */
+const NUMERIC_ORG_ID_RE = /^\d+$/;
+
 /** Whitespace characters used for JSON indentation. */
 const Indenter = {
   SPACE: " ",
@@ -675,7 +678,19 @@ async function resolveOrgSlug(
 ): Promise<string | LocalOpResult> {
   const resolved = await resolveOrgPrefetched(cwd);
   if (resolved) {
-    return resolved.org;
+    // If the detected org is a raw numeric ID (extracted from a DSN), try to
+    // resolve it to a real slug. Numeric IDs can fail for write operations like
+    // project/team creation, and may belong to a different Sentry account.
+    if (NUMERIC_ORG_ID_RE.test(resolved.org)) {
+      const { getOrgByNumericId } = await import("../db/regions.js");
+      const match = await getOrgByNumericId(resolved.org);
+      if (match) {
+        return match.slug;
+      }
+      // Cache miss — fall through to listOrganizations() for proper selection
+    } else {
+      return resolved.org;
+    }
   }
 
   // Fallback: list user's organizations (SQLite-cached after login/first call)
@@ -744,6 +759,85 @@ async function tryGetExistingProject(
   }
 }
 
+/**
+ * Detect an existing Sentry project by looking for a DSN in the project.
+ *
+ * Returns org and project slugs when the DSN's project can be resolved —
+ * either from the local cache or via API (when the org is accessible).
+ * Returns null when no DSN is found or the org belongs to a different account.
+ */
+async function detectExistingProject(cwd: string): Promise<{
+  orgSlug: string;
+  projectSlug: string;
+} | null> {
+  const { detectDsn } = await import("../dsn/index.js");
+  const dsn = await detectDsn(cwd);
+  if (!dsn?.publicKey) {
+    return null;
+  }
+
+  try {
+    const { resolveDsnByPublicKey } = await import("../resolve-target.js");
+    const resolved = await resolveDsnByPublicKey(dsn);
+    if (resolved) {
+      return { orgSlug: resolved.org, projectSlug: resolved.project };
+    }
+  } catch {
+    // Auth error or network error — org inaccessible, fall through to creation
+  }
+  return null;
+}
+
+/**
+ * When no explicit org/project is provided, check for an existing Sentry setup
+ * and either auto-select it (--yes) or prompt the user interactively.
+ *
+ * Returns a LocalOpResult to return early, or null to proceed with creation.
+ */
+async function promptForExistingProject(
+  cwd: string,
+  yes: boolean
+): Promise<LocalOpResult | null> {
+  const existing = await detectExistingProject(cwd);
+  if (!existing) {
+    return null;
+  }
+
+  if (yes) {
+    return tryGetExistingProject(existing.orgSlug, existing.projectSlug);
+  }
+
+  const choice = await select({
+    message: "Found an existing Sentry project in this codebase.",
+    options: [
+      {
+        value: "existing" as const,
+        label: `Use existing project (${existing.orgSlug}/${existing.projectSlug})`,
+        hint: "Sentry is already configured here",
+      },
+      {
+        value: "create" as const,
+        label: "Create a new Sentry project",
+      },
+    ],
+  });
+  if (isCancel(choice)) {
+    return { ok: false, error: "Cancelled." };
+  }
+  if (choice === "existing") {
+    const result = await tryGetExistingProject(
+      existing.orgSlug,
+      existing.projectSlug
+    );
+    if (result) {
+      return result;
+    }
+    // Project deleted or inaccessible — fall through to creation
+  }
+  return null;
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: wizard orchestration requires sequential branching
 async function createSentryProject(
   payload: CreateSentryProjectPayload,
   options: WizardOptions
@@ -774,7 +868,15 @@ async function createSentryProject(
   }
 
   try {
-    // 1. Resolve org — skip interactive resolution if explicitly provided via CLI arg
+    // 1. When no explicit org/project provided, check if Sentry is already set up
+    if (!(options.org || options.project)) {
+      const result = await promptForExistingProject(payload.cwd, options.yes);
+      if (result) {
+        return result;
+      }
+    }
+
+    // 2. Resolve org — skip interactive resolution if explicitly provided via CLI arg
     let orgSlug: string;
     if (options.org) {
       orgSlug = options.org;
@@ -786,7 +888,7 @@ async function createSentryProject(
       orgSlug = orgResult;
     }
 
-    // 2. If both org and project were provided, check if the project already exists.
+    // 3. If both org and project were provided, check if the project already exists.
     //    This avoids a 409 Conflict from the create API when re-running init on an
     //    existing Sentry project (e.g., bare slug resolved via resolveProjectBySlug).
     if (options.org && options.project) {
@@ -796,23 +898,23 @@ async function createSentryProject(
       }
     }
 
-    // 3. Resolve or create team
+    // 4. Resolve or create team
     const team = await resolveOrCreateTeam(orgSlug, {
       team: options.team,
       autoCreateSlug: slug,
       usageHint: "sentry init",
     });
 
-    // 4. Create project
+    // 5. Create project
     const project = await createProject(orgSlug, team.slug, {
       name,
       platform,
     });
 
-    // 5. Get DSN (best-effort)
+    // 6. Get DSN (best-effort)
     const dsn = await tryGetPrimaryDsn(orgSlug, project.slug);
 
-    // 6. Build URL
+    // 7. Build URL
     const url = buildProjectUrl(orgSlug, project.slug);
 
     return {
