@@ -104,6 +104,50 @@ function jsonTransformEventView(
 /** Usage hint for ContextError messages */
 const USAGE_HINT = "sentry event view <org>/<project> <event-id>";
 
+/**
+ * Parse a single positional arg for event view, handling issue short ID
+ * detection both in bare form ("BRUNCHIE-APP-29") and org-prefixed form
+ * ("figma/FULLSCREEN-2RN").
+ *
+ * Must run before `parseSlashSeparatedArg` because that function throws
+ * ContextError for single-slash args like "org/SHORT-ID", which looks like
+ * "org/project" with a missing event ID.
+ */
+function parseSingleArg(arg: string): ParsedPositionalArgs {
+  // Detect "org/SHORT-ID" pattern before parseSlashSeparatedArg.
+  // e.g., "figma/FULLSCREEN-2RN" → auto-redirect to that issue's latest event.
+  const slashIdx = arg.indexOf("/");
+  if (slashIdx !== -1 && arg.indexOf("/", slashIdx + 1) === -1) {
+    const afterSlash = arg.slice(slashIdx + 1);
+    if (afterSlash && looksLikeIssueShortId(afterSlash)) {
+      // Use "org/" (trailing slash) to signal OrgAll mode so downstream
+      // parseOrgProjectArg interprets this as an org, not a project search.
+      return {
+        eventId: "latest",
+        targetArg: `${arg.slice(0, slashIdx)}/`,
+        issueShortId: afterSlash,
+      };
+    }
+  }
+
+  const { id: eventId, targetArg } = parseSlashSeparatedArg(
+    arg,
+    "Event ID",
+    USAGE_HINT
+  );
+
+  // Detect bare issue short ID passed as event ID (e.g., "BRUNCHIE-APP-29").
+  if (!targetArg && looksLikeIssueShortId(eventId)) {
+    return {
+      eventId: "latest",
+      targetArg: undefined,
+      issueShortId: eventId,
+    };
+  }
+
+  return { eventId, targetArg };
+}
+
 /** Return type for parsePositionalArgs */
 type ParsedPositionalArgs = {
   eventId: string;
@@ -175,24 +219,7 @@ export function parsePositionalArgs(args: string[]): ParsedPositionalArgs {
   }
 
   if (args.length === 1) {
-    const { id: eventId, targetArg } = parseSlashSeparatedArg(
-      first,
-      "Event ID",
-      USAGE_HINT
-    );
-
-    // Detect issue short ID passed as event ID (e.g., "BRUNCHIE-APP-29").
-    // When a single arg matches the issue short ID pattern, the user likely
-    // wanted `sentry issue view`. Auto-redirect to show the latest event.
-    if (!targetArg && looksLikeIssueShortId(eventId)) {
-      return {
-        eventId: "latest",
-        targetArg: undefined,
-        issueShortId: eventId,
-      };
-    }
-
-    return { eventId, targetArg };
+    return parseSingleArg(first);
   }
 
   const second = args[1];
@@ -486,14 +513,18 @@ async function resolveIssueShortcut(
   }
 
   // Issue short ID auto-redirect: user passed an issue short ID
-  // (e.g., "BRUNCHIE-APP-29") instead of a hex event ID. Resolve
-  // the issue and show its latest event.
+  // (e.g., "BRUNCHIE-APP-29" or "figma/FULLSCREEN-2RN") instead of a hex
+  // event ID. Resolve the issue and show its latest event.
   if (issueShortId) {
     log.warn(
       `'${issueShortId}' is an issue short ID, not an event ID. Showing the latest event.`
     );
 
-    const resolved = await resolveOrg({ cwd });
+    // Use the explicit org from the parsed target if available (e.g.,
+    // "figma/" → org-all with org "figma"), otherwise fall back to
+    // auto-detection via DSN/env/config.
+    const explicitOrg = parsed.type === "org-all" ? parsed.org : undefined;
+    const resolved = await resolveOrg({ org: explicitOrg, cwd });
     if (!resolved) {
       throw new ContextError(
         "Organization",
