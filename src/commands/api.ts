@@ -87,7 +87,15 @@ export function normalizeEndpoint(endpoint: string): string {
   validateEndpoint(endpoint);
 
   // Remove leading slash if present (rawApiRequest handles the base URL)
-  const trimmed = endpoint.startsWith("/") ? endpoint.slice(1) : endpoint;
+  let trimmed = endpoint.startsWith("/") ? endpoint.slice(1) : endpoint;
+
+  // Strip api/0/ prefix if user accidentally included it — the base URL
+  // already includes /api/0/, so keeping it would produce a doubled path
+  // like /api/0/api/0/... (see CLI-K1).
+  // Also strip bare "api/0" to maintain idempotency.
+  if (trimmed.startsWith("api/0/") || trimmed === "api/0") {
+    trimmed = trimmed.slice(trimmed.startsWith("api/0/") ? 6 : 5);
+  }
 
   // Split path and query string
   const queryIndex = trimmed.indexOf("?");
@@ -1160,6 +1168,18 @@ export const apiCommand = buildCommand({
     const { stdin } = this;
 
     const normalizedEndpoint = normalizeEndpoint(endpoint);
+
+    // Detect whether normalizeEndpoint stripped the api/0/ prefix (CLI-K1).
+    // normalizeEndpoint only adds at most 1 char (trailing slash), so if the
+    // normalized result is shorter than the raw input, the prefix was stripped.
+    const rawLen = endpoint.startsWith("/")
+      ? endpoint.length - 1
+      : endpoint.length;
+    if (normalizedEndpoint.length < rawLen) {
+      log.warn(
+        "Endpoint includes the /api/0/ prefix which is added automatically — stripping it to avoid a doubled path"
+      );
+    }
     const { body, params } = await resolveBody(flags, stdin);
 
     const headers =

@@ -262,6 +262,24 @@ const EXCLUDED_INTEGRATIONS = new Set([
   "Modules", // Lists all loaded modules - unnecessary for CLI telemetry
 ]);
 
+/**
+ * Check whether `util.getSystemErrorMap` exists at setup time.
+ * Bun does not implement this Node.js API, which the SDK's NodeSystemError
+ * integration uses in its `processEvent` hook. When missing, the hook crashes
+ * during event processing instead of sending the error report (CLI-K1).
+ *
+ * Checked once at module load so the integration filter is a simple boolean.
+ */
+const hasGetSystemErrorMap = (() => {
+  try {
+    // Dynamic require to avoid bundler issues — the check only matters at runtime
+    const util = require("node:util") as Record<string, unknown>;
+    return typeof util.getSystemErrorMap === "function";
+  } catch {
+    return false;
+  }
+})();
+
 /** Current beforeExit handler, tracked so it can be replaced on re-init */
 let currentBeforeExitHandler: (() => void) | null = null;
 
@@ -312,11 +330,14 @@ export function initSentry(
   const client = Sentry.init({
     dsn: SENTRY_CLI_DSN,
     enabled,
-    // Keep default integrations but filter out ones that add overhead without benefit
-    // Important: Don't use defaultIntegrations: false as it may break debug ID support
+    // Keep default integrations but filter out ones that add overhead without benefit.
+    // Important: Don't use defaultIntegrations: false as it may break debug ID support.
+    // NodeSystemError is excluded on runtimes missing util.getSystemErrorMap (Bun) — CLI-K1.
     integrations: (defaults) =>
       defaults.filter(
-        (integration) => !EXCLUDED_INTEGRATIONS.has(integration.name)
+        (integration) =>
+          !EXCLUDED_INTEGRATIONS.has(integration.name) &&
+          (integration.name !== "NodeSystemError" || hasGetSystemErrorMap)
       ),
     environment,
     // Enable Sentry structured logs for non-exception telemetry (e.g., unexpected input warnings)
